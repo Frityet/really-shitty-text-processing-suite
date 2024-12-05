@@ -16,7 +16,7 @@ Example:
     ./main show-line test.txt 1
     ./main find test.txt "search string"
     ./main trim test.txt
-    ./main show-change-log
+    ./main changelog test.txt
 */
 
 int main(int argc, const char *argv[])

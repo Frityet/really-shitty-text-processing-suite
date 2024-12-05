@@ -350,6 +350,8 @@ static int show_number_of_lines(size_t param_len, const char *nonnull params[sta
 
     size_t line_count = 0;
     char buffer[1024];
+
+    //fgets reads until end of the line
     while (fgets(buffer, sizeof(buffer), file)) {
         line_count++;
     }
@@ -409,7 +411,9 @@ static int trim(size_t param_len, const char *nonnull params[static param_len])
             lines_allocated = lines_allocated ? lines_allocated * 2 : 10;
             lines = $realloc(lines, lines_allocated * sizeof(char *));
         }
-        lines[lines_count] = $strdup(buffer);
+        char *tmpbuf = $calloc(sizeof(buffer) + 1, sizeof(char)); //we need teh whole size of the buffer for when we add a newline later
+        strcpy(tmpbuf, buffer);
+        lines[lines_count] = tmpbuf;
         lines_count++;
     }
     fclose(file); // just in case its auto-locked, we don't want it to mess up our writes
@@ -433,7 +437,7 @@ static int trim(size_t param_len, const char *nonnull params[static param_len])
         strcat(line, "\n");
     }
 
-    file = $fopen(filename, "w");
+    file = $fopen(filename, "wb");
     defer { fclose(file); };
 
     for (size_t i = 0; i < lines_count; i++) {
@@ -561,6 +565,9 @@ void init_commands()
         .parameters = show_number_of_lines_params
     });
 
+    //Additional feature #1: Trimming!
+    //This command will remove all trailing whitespace from each line in a file
+    //This saves space and makes editing files nicer and better
     static struct Parameter trim_params[] = {
         { .name = "filename", .optional = false, .type = ParameterType_STRING },
         {0}
@@ -571,6 +578,9 @@ void init_commands()
         .parameters = trim_params
     });
 
+    //Additional feature #2: Find!
+    //This command will search for a string in a file and print out the lines that contain the string
+    //Allows for easy searching of files
     static struct Parameter find_params[] = {
         { .name = "filename", .optional = false, .type = ParameterType_STRING },
         { .name = "search_string", .optional = false, .type = ParameterType_STRING },
@@ -602,8 +612,10 @@ void add_command(struct Command cmd)
     }
 }
 
+//Looks through a command in the registry
 struct Command *find_command(const char *name)
 {
+
     for (size_t i = 0; i < command_count; ++i) {
         if (strcmp(commands[i].name, name) == 0) {
             return &commands[i];
