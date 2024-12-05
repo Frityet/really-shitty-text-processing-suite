@@ -166,10 +166,15 @@ static void test_show_change_log()
 
     const char *params3[] = { "test_changelog.txt", "1" };
     delete_line(2, params3);
-    defer { remove("test_changelog.txt"); };
+    defer {
+        remove("test_changelog.txt");
+        char changelog_filename[PATH_MAX];
+        get_changelog_filename("test_changelog.txt", changelog_filename, sizeof(changelog_filename));
+        remove(changelog_filename);
+    };
 
     printf("Output of show_change_log:\n");
-    int result = show_change_log(0, nullptr);
+    int result = show_change_log(1, params1);
     assert(result == 0);
 
     printf("test_show_change_log passed.\n");
@@ -177,61 +182,56 @@ static void test_show_change_log()
 
 static void test_change_log()
 {
-    size_t idx = get_changelog_count();
+    const char *filename = "test_changelog.txt";
+    const char *params_create[] = { filename };
+    // 1: Create
+    create_file(1, params_create);
+    assert(file_exists(filename));
+    defer { remove(filename); }; 
 
-    const char *params1[] = { "test_changelog.txt", "First Line" };
-    append_line(2, params1);
+    // 2: Append
+    const char *params_append[] = { filename, "First appended line" };
+    append_line(2, params_append);
 
-    const char *params2[] = { "test_changelog.txt", "Second Line" };
-    append_line(2, params2);
+    // 3: Insert
+    const char *params_insert[] = { filename, "1", "Inserted line at position 1" };
+    insert_line(3, params_insert);
 
-    const char *params3[] = { "test_changelog.txt", "1" };
-    delete_line(2, params3);
+    // 4: Delete
+    const char *params_delete[] = { filename, "2" };
+    delete_line(2, params_delete);
 
-    const char *params4[] = { "test_changelog.txt", "1", "Inserted Line" };
-    insert_line(3, params4);
+    struct Changelog *changelog;
+    int parse_result = parse_changelog(filename, &changelog);
+    assert(parse_result == 0);
+    defer { free(changelog); };  // Ensure memory is freed after the test
 
-    defer { remove("test_changelog.txt"); };
+    assert(changelog->length == 4);  // We performed 3 operations
 
-    const struct ChangelogEntry *nullable entry = nullptr;
 
-    // Entry 0: Append Line
-    entry = get_changelog_entry(idx++);
-    assert(entry != nullptr);
-    assert(strcmp(entry->operation, "Append Line") == 0);
-    assert(strcmp(entry->filename, "test_changelog.txt") == 0);
-    assert(entry->line_number == 0); // Append operations use line_number = 0
-    assert(entry->total_lines == 1);
+    struct ChangelogEntry *entry1 = &changelog->entries[0];
+    assert(strcmp(entry1->operation, "Create File") == 0);
+    assert(entry1->line_number == 0);
+    assert(entry1->total_lines == 0);
 
-    // Entry 1: Append Line
-    entry = get_changelog_entry(idx++);
-    assert(entry != nullptr);
-    assert(strcmp(entry->operation, "Append Line") == 0);
-    assert(strcmp(entry->filename, "test_changelog.txt") == 0);
-    assert(entry->line_number == 0);
-    assert(entry->total_lines == 2);
+    struct ChangelogEntry *entry2 = &changelog->entries[1];
+    assert(strcmp(entry2->operation, "Append Line") == 0);
+    assert(entry2->line_number == 0);  // Line number is 0 for append operations
+    assert(entry2->total_lines == 1);  // Should have 1 line after appending
 
-    // Entry 2: Delete Line
-    entry = get_changelog_entry(idx++);
-    assert(entry != nullptr);
-    assert(strcmp(entry->operation, "Delete Line") == 0);
-    assert(strcmp(entry->filename, "test_changelog.txt") == 0);
-    assert(entry->line_number == 1); // Deleted line number
-    assert(entry->total_lines == 1);
+    struct ChangelogEntry *entry3 = &changelog->entries[2];
+    assert(strcmp(entry3->operation, "Insert Line") == 0);
+    assert(entry3->line_number == 1);  // Inserted at line 1
+    assert(entry3->total_lines == 2);  // Should have 2 lines after insertion
 
-    // Entry 3: Insert Line
-    entry = get_changelog_entry(idx++);
-    assert(entry != nullptr);
-    assert(strcmp(entry->operation, "Insert Line") == 0);
-    assert(strcmp(entry->filename, "test_changelog.txt") == 0);
-    assert(entry->line_number == 1); // Inserted at line number
-    assert(entry->total_lines == 2);
-
-    entry = get_changelog_entry(idx++);
-    assert(entry == nullptr);
+    // rm changelog
+    char changelog_filename[PATH_MAX];
+    get_changelog_filename(filename, changelog_filename, sizeof(changelog_filename));
+    remove(changelog_filename); 
 
     printf("test_change_log passed.\n");
 }
+
 
 static void test_show_number_of_lines()
 {

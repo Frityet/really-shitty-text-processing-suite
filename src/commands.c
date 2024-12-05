@@ -9,33 +9,71 @@
 static struct Command commands[MAX_COMMANDS];
 static size_t command_count = 0;
 
-static struct ChangelogEntry changelog[MAX_CHANGELOG_ENTRIES];
-static size_t changelog_count = 0;
+static inline void get_changelog_filename(const char *filename, char *changelog_filename, size_t size)
+{ snprintf(changelog_filename, size, "%s.changelog", filename); }
+
+static int parse_changelog(const char *filename, struct Changelog **changelog)
+{
+    char changelog_filename[PATH_MAX];
+    get_changelog_filename(filename, changelog_filename, sizeof(changelog_filename));
+
+    auto file = $fopen(changelog_filename, "rb");
+
+    // Determine the file size
+    if (fseek(file, 0, SEEK_END) != 0) {
+        perror("Error seeking to end of changelog file");
+        fclose(file);
+        return -1;
+    }
+    long filesize = ftell(file);
+    if (filesize < 0) {
+        perror("Error determining changelog file size");
+        fclose(file);
+        return -1;
+    }
+    rewind(file);
+
+    size_t num_entries = filesize / sizeof(struct ChangelogEntry);
+
+    // Allocate memory for Changelog struct with enough space for entries
+    struct Changelog *cl = $malloc(sizeof(struct Changelog) + num_entries * sizeof(struct ChangelogEntry));
+
+    cl->length = num_entries;
+
+    // Read the entries into the Changelog struct
+    size_t read = fread(cl->entries, sizeof(struct ChangelogEntry), num_entries, file);
+    if (read != num_entries) {
+        perror("Error reading changelog entries");
+        free(cl);
+        fclose(file);
+        return -1;
+    }
+
+    fclose(file);
+    *changelog = cl;
+    return 0;
+}
 
 static void log_change(const char *operation, const char *filename, size_t line_number, size_t total_lines)
 {
-    if (changelog_count < MAX_CHANGELOG_ENTRIES) {
-        strncpy(changelog[changelog_count].operation, operation, sizeof(changelog[changelog_count].operation) - 1);
-        strncpy(changelog[changelog_count].filename, filename, sizeof(changelog[changelog_count].filename) - 1);
-        changelog[changelog_count].line_number = line_number;
-        changelog[changelog_count].total_lines = total_lines;
-        changelog_count++;
-    } else {
-        fprintf(stderr, "Change log is full. Cannot log more operations.\n");
-    }
-}
+    char changelog_filename[PATH_MAX];
+    get_changelog_filename(filename, changelog_filename, sizeof(changelog_filename));
 
-const struct ChangelogEntry *nullable get_changelog_entry(size_t idx)
-{
-    if (idx < changelog_count) {
-        return &changelog[idx];
-    } else {
-        return nullptr;
-    }
-}
+    auto changelog_file = $fopen(changelog_filename, "ab");
 
-size_t get_changelog_count(void)
-{ return changelog_count; }
+    struct ChangelogEntry entry = {0};
+    strncpy(entry.operation, operation, sizeof(entry.operation) - 1);
+    entry.operation[sizeof(entry.operation) - 1] = '\0';
+    entry.timestamp = time(nullptr);
+    entry.line_number = line_number;
+    entry.total_lines = total_lines;
+
+    if (fwrite(&entry, sizeof(entry), 1, changelog_file) != 1) {
+        perror("Error writing to changelog file");
+    }
+
+    fclose(changelog_file);
+}
 
 static int create_file(size_t param_len, const char *nonnull params[static param_len])
 {
@@ -43,6 +81,7 @@ static int create_file(size_t param_len, const char *nonnull params[static param
     auto file = $fopen(filename, "wb");
     defer { fclose(file); };
 
+    log_change("Create File", filename, 0, 0);
     printf("File '%s' created successfully.\n", filename);
     return 0;
 }
@@ -62,6 +101,7 @@ static int copy_file(size_t param_len, const char *nonnull params[static param_l
         fwrite(buffer, 1, bytes, dest);
     }
     
+    log_change("Copy File", destination, 0, 0);
     printf("File copied from '%s' to '%s'.\n", source, destination);
     return 0;
 }
@@ -118,7 +158,7 @@ static int append_line(size_t param_len, const char *nonnull params[static param
     }
 
     printf("Appended line to '%s' successfully.\n", filename);
-    log_change("Append Line", filename, 0, total_lines);
+    log_change("Append Line", filename, total_lines, total_lines);
     return 0;
 }
 
@@ -267,28 +307,38 @@ static int show_line(size_t param_len, const char *nonnull params[static param_l
 }
 
 
-static int show_change_log(size_t, const char *nonnull[])
+static int show_change_log(size_t param_len, const char *nonnull params[static param_len])
 {
-    if (changelog_count == 0) {
-        printf("No operations have been performed yet.\n");
-        return 0;
+    const char *filename = params[0];
+
+    struct Changelog *nonnull changelog;
+    if (parse_changelog(filename, &changelog) != 0) {
+        fprintf(stderr, "Failed to parse changelog for file '%s'.\n", filename);
+        return 1;
     }
 
-    printf("Change Log:\n");
-    for (size_t i = 0; i < changelog_count; i++) {
-        struct ChangelogEntry *entry = &changelog[i];
-        if (strcmp(entry->operation, "Append Line") == 0 or
-            strcmp(entry->operation, "Insert Line") == 0 or
+    printf("Change Log for '%s':\n", filename);
+
+    for (size_t idx = 0; idx < changelog->length; idx++) {
+        struct ChangelogEntry *entry = &changelog->entries[idx];
+
+        char timestamp[32] = {0};
+        strftime(timestamp, sizeof(timestamp), "%Y-%m-%d %H:%M:%S", localtime(&entry->timestamp));
+
+        if (strcmp(entry->operation, "Append Line") == 0 ||
+            strcmp(entry->operation, "Insert Line") == 0 ||
             strcmp(entry->operation, "Delete Line") == 0) {
-            printf("%zu. %s on '%s' at line %zu. Total lines: %zu.\n",
-                   i + 1, entry->operation, entry->filename,
+            printf("%zu. %s at %s on line %zu. Total lines: %zu.\n",
+                   idx + 1, entry->operation, timestamp,
                    entry->line_number, entry->total_lines);
         } else {
-            printf("%zu. %s on '%s'. Total lines: %zu.\n",
-                   i + 1, entry->operation, entry->filename,
+            printf("%zu. %s at %s. Total lines: %zu.\n",
+                   idx + 1, entry->operation, timestamp,
                    entry->total_lines);
         }
     }
+
+    free(changelog);
     return 0;
 }
 
@@ -314,6 +364,83 @@ static int help(size_t, const char *nonnull[])
     for (size_t i = 0; i < command_count; ++i) {
         printf("  %s\n", commands[i].name);
     }
+    return 0;
+}
+
+static int find(size_t param_len, const char *nonnull params[static param_len])
+{
+    const char *filename = params[0], *search_string = params[1];
+
+    auto file = $fopen(filename, "r");
+    defer { fclose(file); };
+
+    char buffer[1024];
+    size_t line_number = 1, matches = 0;
+
+    while (fgets(buffer, sizeof(buffer), file)) {
+        if (strstr(buffer, search_string) != NULL) {
+            printf("Line %zu: %s", line_number, buffer);
+            matches++;
+        }
+        line_number++;
+    }
+
+    if (matches == 0) {
+        printf("No matches found for '%s' in '%s'.\n", search_string, filename);
+    } else {
+        printf("Found %zu matching line(s) for '%s' in '%s'.\n", matches, search_string, filename);
+    }
+
+    return 0;
+}
+
+static int trim(size_t param_len, const char *nonnull params[static param_len])
+{
+    const char *filename = params[0];
+
+    auto file = $fopen(filename, "r");
+
+    // Read all lines into memory
+    char *nonnull *nullable lines = nullptr;
+    size_t lines_allocated = 0, lines_count = 0;
+    char buffer[1024];
+    while (fgets(buffer, sizeof(buffer), file)) {
+        if (lines_count >= lines_allocated) {
+            lines_allocated = lines_allocated ? lines_allocated * 2 : 10;
+            lines = $realloc(lines, lines_allocated * sizeof(char *));
+        }
+        lines[lines_count] = $strdup(buffer);
+        lines_count++;
+    }
+    fclose(file); // just in case its auto-locked, we don't want it to mess up our writes
+    defer {
+        for (size_t i = 0; i < lines_count; i++) {
+            free(lines[i]);
+        }
+        free(lines);
+    };
+
+    for (size_t i = 0; i < lines_count; i++) {
+        char *line = lines[i];
+        size_t len = strlen(line);
+        //removing all trailing whitespace
+        while (len > 0 and (line[len - 1] == ' ' or line[len - 1] == '\t' or line[len - 1] == '\n' or line[len - 1] == '\r')) {
+            line[len - 1] = '\0';
+            len--;
+        }
+
+        // we need the newline (fuck u DOS line endings :))
+        strcat(line, "\n");
+    }
+
+    file = $fopen(filename, "w");
+    defer { fclose(file); };
+
+    for (size_t i = 0; i < lines_count; i++) {
+        fputs(lines[i], file);
+    }
+
+    printf("Trimmed trailing whitespace from '%s' successfully.\n", filename);
     return 0;
 }
 
@@ -415,6 +542,7 @@ void init_commands()
     });
 
     static struct Parameter show_change_log_params[] = {
+        { .name = "filename", .optional = false, .type = ParameterType_STRING },
         {0}
     };
     add_command((struct Command){
@@ -431,6 +559,27 @@ void init_commands()
         .name = "line-count",
         .action = &show_number_of_lines,
         .parameters = show_number_of_lines_params
+    });
+
+    static struct Parameter trim_params[] = {
+        { .name = "filename", .optional = false, .type = ParameterType_STRING },
+        {0}
+    };
+    add_command((struct Command){
+        .name = "trim",
+        .action = &trim,
+        .parameters = trim_params
+    });
+
+    static struct Parameter find_params[] = {
+        { .name = "filename", .optional = false, .type = ParameterType_STRING },
+        { .name = "search_string", .optional = false, .type = ParameterType_STRING },
+        {0}
+    };
+    add_command((struct Command){
+        .name = "find",
+        .action = &find,
+        .parameters = find_params
     });
 
     static struct Parameter help_params[] = {

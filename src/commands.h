@@ -1,6 +1,8 @@
 #pragma once
 
 #include "common.h"
+
+#include <time.h>
 //fuck you linux! Just be posix compliant!!
 #if defined(__linux__)
 #   include <linux/limits.h>
@@ -27,21 +29,23 @@ struct Command {
 };
 
 struct ChangelogEntry {
-    char    operation[64],      //This should be dynamic, but at the same time I don't care!
-            filename[PATH_MAX];
+    char    operation[64];      //This should be dynamic, but at the same time I don't care!
+    time_t timestamp;
     size_t  line_number,        // For line operations
             total_lines;        // Number of lines after operation
 };
 
+struct Changelog {
+    size_t length;
+    struct ChangelogEntry entries[];
+};
+
 enum {
     MAX_COMMANDS = 128,
-    MAX_CHANGELOG_ENTRIES = 1024,
 };
 
 
 void add_command(struct Command cmd);
 struct Command *nullable find_command(const char *name);
-const struct ChangelogEntry *nullable get_changelog_entry(size_t idx);
-size_t get_changelog_count(void);
 
 #pragma clang assume_nonnull end

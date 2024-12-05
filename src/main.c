@@ -5,6 +5,20 @@
 
 #include "commands.h"
 
+/*
+Usage:
+    ./main <command> <param1> <param2> ...
+
+Example:
+    ./main help
+    ./main create-file test.txt
+    ./main copy-file test.txt test2.txt
+    ./main show-line test.txt 1
+    ./main find test.txt "search string"
+    ./main trim test.txt
+    ./main show-change-log
+*/
+
 int main(int argc, const char *argv[])
 {
 
