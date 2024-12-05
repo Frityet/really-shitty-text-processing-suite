@@ -7,6 +7,7 @@
 
 #pragma clang assume_nonnull begin
 
+//utility functions for our tests
 static inline int file_exists(const char *filename)
 { return access(filename, F_OK) == 0; }
 
@@ -135,7 +136,7 @@ static void test_insert_line()
 
     char *line = read_line("test_insert_line.txt", 2);
     assert(line != nullptr);
-    assert(strcmp(line, "Inserted Line") == 0 || strcmp(line, "Inserted Line\n") == 0);
+    assert(strcmp(line, "Inserted Line") == 0 or strcmp(line, "Inserted Line\n") == 0);
 
     printf("test_insert_line passed.\n");
 }
@@ -174,6 +175,64 @@ static void test_show_change_log()
     printf("test_show_change_log passed.\n");
 }
 
+static void test_change_log()
+{
+    size_t idx = get_changelog_count();
+
+    const char *params1[] = { "test_changelog.txt", "First Line" };
+    append_line(2, params1);
+
+    const char *params2[] = { "test_changelog.txt", "Second Line" };
+    append_line(2, params2);
+
+    const char *params3[] = { "test_changelog.txt", "1" };
+    delete_line(2, params3);
+
+    const char *params4[] = { "test_changelog.txt", "1", "Inserted Line" };
+    insert_line(3, params4);
+
+    defer { remove("test_changelog.txt"); };
+
+    const struct ChangelogEntry *nullable entry = nullptr;
+
+    // Entry 0: Append Line
+    entry = get_changelog_entry(idx++);
+    assert(entry != nullptr);
+    assert(strcmp(entry->operation, "Append Line") == 0);
+    assert(strcmp(entry->filename, "test_changelog.txt") == 0);
+    assert(entry->line_number == 0); // Append operations use line_number = 0
+    assert(entry->total_lines == 1);
+
+    // Entry 1: Append Line
+    entry = get_changelog_entry(idx++);
+    assert(entry != nullptr);
+    assert(strcmp(entry->operation, "Append Line") == 0);
+    assert(strcmp(entry->filename, "test_changelog.txt") == 0);
+    assert(entry->line_number == 0);
+    assert(entry->total_lines == 2);
+
+    // Entry 2: Delete Line
+    entry = get_changelog_entry(idx++);
+    assert(entry != nullptr);
+    assert(strcmp(entry->operation, "Delete Line") == 0);
+    assert(strcmp(entry->filename, "test_changelog.txt") == 0);
+    assert(entry->line_number == 1); // Deleted line number
+    assert(entry->total_lines == 1);
+
+    // Entry 3: Insert Line
+    entry = get_changelog_entry(idx++);
+    assert(entry != nullptr);
+    assert(strcmp(entry->operation, "Insert Line") == 0);
+    assert(strcmp(entry->filename, "test_changelog.txt") == 0);
+    assert(entry->line_number == 1); // Inserted at line number
+    assert(entry->total_lines == 2);
+
+    entry = get_changelog_entry(idx++);
+    assert(entry == nullptr);
+
+    printf("test_change_log passed.\n");
+}
+
 static void test_show_number_of_lines()
 {
     auto file = fopen("test_line_count.txt", "w");
@@ -199,6 +258,7 @@ int main() {
     test_insert_line();
     test_show_line();
     test_show_change_log();
+    test_change_log();
     test_show_number_of_lines();
 
     printf("All tests passed.\n");

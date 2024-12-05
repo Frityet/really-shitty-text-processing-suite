@@ -4,24 +4,10 @@
 #include <stdlib.h>
 #include <string.h>
 
-//fuck you linux! Just be posix compliant!!
-#if defined(__linux__)
-#   include <linux/limits.h>
-#else
-#   include <limits.h>
-#endif
-
 #pragma clang assume_nonnull begin
 
 static struct Command commands[MAX_COMMANDS];
 static size_t command_count = 0;
-
-struct ChangelogEntry {
-    char    operation[64],      //This should be dynamic, but at the same time I don't care!
-            filename[PATH_MAX];
-    size_t  line_number,        // For line operations
-            total_lines;        // Number of lines after operation
-};
 
 static struct ChangelogEntry changelog[MAX_CHANGELOG_ENTRIES];
 static size_t changelog_count = 0;
@@ -38,6 +24,18 @@ static void log_change(const char *operation, const char *filename, size_t line_
         fprintf(stderr, "Change log is full. Cannot log more operations.\n");
     }
 }
+
+const struct ChangelogEntry *nullable get_changelog_entry(size_t idx)
+{
+    if (idx < changelog_count) {
+        return &changelog[idx];
+    } else {
+        return nullptr;
+    }
+}
+
+size_t get_changelog_count(void)
+{ return changelog_count; }
 
 static int create_file(size_t param_len, const char *nonnull params[static param_len])
 {
@@ -100,12 +98,13 @@ static int append_line(size_t param_len, const char *nonnull params[static param
     const char *filename = params[0], *line_content = params[1];
 
     auto file = $fopen(filename, "a");
-    defer { fclose(file); };
 
     if (fprintf(file, "%s\n", line_content) < 0) {
         perror("Error writing to file");
         return 1;
     }
+
+    fclose(file); //have to do it early to save changes
 
     // Get the number of lines after appending
     size_t total_lines = 0;
@@ -144,16 +143,8 @@ static int delete_line(size_t param_len, const char *nonnull params[static param
             if (lines_count >= lines_allocated) {
                 lines_allocated = lines_allocated ? lines_allocated * 2 : 10;
                 lines = $realloc(lines, lines_allocated * sizeof(char *));
-                if (!lines) {
-                    perror("Memory allocation failed");
-                    return 1;
-                }
             }
-            lines[lines_count] = strdup(buffer);
-            if (!lines[lines_count]) {
-                perror("Memory allocation failed");
-                return 1;
-            }
+            lines[lines_count] = $strdup(buffer);
             lines_count++;
         } else {
             line_found = 1;
@@ -180,11 +171,8 @@ static int delete_line(size_t param_len, const char *nonnull params[static param
         fputs(lines[i], file);
     }
 
-    // Get the number of lines after deletion
-    size_t total_lines = lines_count;
-
     printf("Deleted line %d from '%s' successfully.\n", line_number, filename);
-    log_change("Delete Line", filename, (size_t)line_number, total_lines);
+    log_change("Delete Line", filename, (size_t)line_number, lines_count);
     return 0;
 }
 
@@ -192,7 +180,10 @@ static int insert_line(size_t param_len, const char *nonnull params[static param
 {
     const char *filename = params[0];
     int line_number = atoi(params[1]);
-    const char *line_content = params[2];
+    const char *line_content_raw = params[2];
+    //we need a newline!
+    char line_content[strlen(line_content_raw) + 2]; //I love VLAs :)
+    snprintf(line_content, sizeof(line_content), "%s\n", line_content_raw);
 
     auto file = $fopen(filename, "r");
     defer { fclose(file); };
@@ -205,16 +196,8 @@ static int insert_line(size_t param_len, const char *nonnull params[static param
         if (lines_count >= lines_allocated) {
             lines_allocated = lines_allocated ? lines_allocated * 2 : 10;
             lines = $realloc(lines, lines_allocated * sizeof(char *));
-            if (!lines) {
-                perror("Memory allocation failed");
-                return 1;
-            }
         }
-        lines[lines_count] = strdup(buffer);
-        if (!lines[lines_count]) {
-            perror("Memory allocation failed");
-            return 1;
-        }
+        lines[lines_count] = $strdup(buffer);
         lines_count++;
     }
 
@@ -233,7 +216,7 @@ static int insert_line(size_t param_len, const char *nonnull params[static param
 
     lines = $realloc(lines, (lines_count + 1) * sizeof(char *));
     defer {
-        for (size_t i = 0; i < lines_count; i++) {
+        for (size_t i = 0; i < lines_count + 1; i++) { //we add 1 because we add the new line content in next bit of code
             free(lines[i]);
         }
         free(lines);
@@ -241,11 +224,7 @@ static int insert_line(size_t param_len, const char *nonnull params[static param
     for (size_t i = lines_count; i >= (size_t)(line_number); i--) {
         lines[i] = lines[i - 1];
     }
-    lines[line_number - 1] = strdup(line_content);
-    if (!lines[line_number - 1]) {
-        perror("Memory allocation failed");
-        return 1;
-    }
+    lines[line_number - 1] = $strdup(line_content);
     lines_count++;
 
     // Write back to the file
@@ -342,6 +321,9 @@ static int help(size_t, const char *nonnull[])
 [[gnu::constructor(101)]]
 void init_commands()
 {
+    // any commands added to the registry here is able to be picked up by the rest of the program and used.
+    // registering it here will automatically make it available in `help` and executable from the commandline
+
     static struct Parameter create_file_params[] = {
         { .name = "filename", .optional = false, .type = ParameterType_STRING },
         {0} //every param array must end with a nullptr entry to indicate the end of the array

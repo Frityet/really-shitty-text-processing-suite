@@ -27,6 +27,7 @@
 static inline void $_defer_execute(void (^nonnull *nonnull block)(void))
 { (*block)(); }
 
+// "safer" versions of these functions
 #define $malloc(...) $assert_nonnull(malloc(__VA_ARGS__))
 #define $realloc(...) $assert_nonnull(realloc(__VA_ARGS__))
 #define $calloc(...) $assert_nonnull(calloc(__VA_ARGS__))
